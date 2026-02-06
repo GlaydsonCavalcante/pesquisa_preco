@@ -10,15 +10,12 @@ def criar_tabela():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Novas colunas:
-    # estado_detalhado: novo, otimo, funcional, etc.
-    # custo_reparo: valor estimado pela IA
-    # ativo: 1 (Sim) ou 0 (Não) - Para "soft delete"
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS precos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             data_consulta TEXT,
-            modelo TEXT,
+            modelo TEXT,           -- Nome Oficial do CSV (para o gráfico funcionar)
+            termo_pesquisa TEXT,   -- O que digitamos na busca (ex: "FP-30X")
             preco REAL,
             custo_reparo REAL DEFAULT 0,
             condicao TEXT,
@@ -34,13 +31,13 @@ def criar_tabela():
 
     conn.commit()
     conn.close()
-    print("✅ Base de dados v2.0 criada.")
+    print("✅ Base de dados v3.0 (Relacional) criada.")
 
 def salvar_no_banco(dados):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Evita duplicatas no mesmo dia
+    # Evita duplicatas
     cursor.execute("SELECT id FROM precos WHERE link = ? AND data_consulta = ?", (dados['link'], dados['data']))
     if cursor.fetchone():
         conn.close()
@@ -48,13 +45,14 @@ def salvar_no_banco(dados):
 
     cursor.execute('''
         INSERT INTO precos (
-            data_consulta, modelo, preco, custo_reparo, condicao, 
+            data_consulta, modelo, termo_pesquisa, preco, custo_reparo, condicao, 
             estado_detalhado, loja, localizacao, tem_envio, link, ai_analise, ativo
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         dados['data'], 
-        dados['modelo'], 
+        dados['modelo'],             # Sempre o nome do CSV
+        dados.get('termo_usado', ''), # O termo que usamos na busca
         dados['preco'],
         dados.get('custo_reparo', 0),
         dados['condicao'],
@@ -64,23 +62,8 @@ def salvar_no_banco(dados):
         1 if dados['tem_envio'] else 0, 
         dados['link'],
         dados.get('ai_analise', ''),
-        1 # Ativo por padrão
+        1
     ))
     
-    conn.commit()
-    conn.close()
-
-def carregar_tudo_para_edicao():
-    """Função para o Dashboard de Gestão"""
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT * FROM precos", conn)
-    conn.close()
-    return df
-
-def atualizar_status_ativo(id_produto, novo_status):
-    """Permite inativar um anúncio pelo Dashboard"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE precos SET ativo = ? WHERE id = ?", (novo_status, id_produto))
     conn.commit()
     conn.close()

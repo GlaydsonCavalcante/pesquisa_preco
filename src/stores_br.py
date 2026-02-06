@@ -23,9 +23,13 @@ def setup_driver():
     caminho_perfil = os.path.join(caminho_projeto, "chrome_perfil")
     
     chrome_options = Options()
-    # chrome_options.add_argument("--headless") # Podes ativar depois
+    # Argumentos vitais para evitar crash
     chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled") 
+    chrome_options.add_argument("--remote-debugging-port=9222") # <--- A CURA DO ERRO
+    chrome_options.add_argument("--log-level=3")
     chrome_options.add_argument(f"user-data-dir={caminho_perfil}")
     
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)

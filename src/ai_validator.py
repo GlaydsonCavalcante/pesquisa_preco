@@ -72,3 +72,28 @@ if __name__ == "__main__":
     print("Teste de conexão com Gemini 2.5 Flash...")
     res = validar_com_ia("Piano Digital Roland Fp-30x Usado", 3500.00, "Roland FP-30X")
     print(res)
+
+# src/ai_validator.py
+
+def analisar_novo_modelo_ahsd(nome_modelo, titulo_anuncio):
+    prompt = f"""
+    ###CONTEXTO
+    Atue como um especialista em engenharia de instrumentos musicais para usuários com Altas Habilidades/Superdotação (QI 140+)...
+    [RESTO DO SEU PROMPT REFINADO AQUI]
+    """
+    try:
+        # Chamada ao cliente Gemini (Flash Lite ou Preview)
+        response = client.models.generate_content(
+            model='gemini-3-flash-preview', 
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type='application/json'
+            )
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"⚠️ Erro na análise AHSD: {e}")
+        return None
+    
+    # Chamada ao gemini-3-flash-preview aqui...
