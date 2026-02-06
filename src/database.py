@@ -1,41 +1,58 @@
 import sqlite3
 import os
 
-# Caminho para o banco de dados
 DB_PATH = os.path.join("data", "historico_precos.db")
 
 def criar_tabela():
-    """
-    Cria a tabela no banco de dados SQLite se ela não existir.
-    """
-    # Garante que a pasta 'data' existe
     if not os.path.exists("data"):
         os.makedirs("data")
-        print("Pasta 'data' criada.")
 
-    # Conecta ao banco (cria o arquivo se não existir)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Criação da tabela com colunas para Logística e Preço
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS precos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             data_consulta TEXT,
             modelo TEXT,
             preco REAL,
-            condicao TEXT,       -- Novo ou Usado
-            loja TEXT,           -- Ex: Mercado Livre, OLX
-            localizacao TEXT,    -- Ex: Brasília, DF, ou Outro
-            tem_envio INTEGER,   -- 1 para Sim, 0 para Não
-            link TEXT
+            condicao TEXT,
+            loja TEXT,
+            localizacao TEXT,
+            tem_envio INTEGER,
+            link TEXT,
+            ai_analise TEXT  -- Nova coluna para guardar o que a IA pensou
         )
     ''')
 
     conn.commit()
     conn.close()
-    print(f"Base de dados verificada/criada com sucesso em: {DB_PATH}")
+    print("✅ Base de dados (re)criada com estrutura para IA.")
 
-# Este bloco permite testar o arquivo rodando-o diretamente
-if __name__ == "__main__":
-    criar_tabela()
+def salvar_no_banco(dados):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Verifica se esse link JÁ foi salvo hoje para evitar duplicata no mesmo dia
+    cursor.execute("SELECT id FROM precos WHERE link = ? AND data_consulta = ?", (dados['link'], dados['data']))
+    if cursor.fetchone():
+        conn.close()
+        return # Já salvamos hoje, ignora.
+
+    cursor.execute('''
+        INSERT INTO precos (data_consulta, modelo, preco, condicao, loja, localizacao, tem_envio, link, ai_analise)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        dados['data'], 
+        dados['modelo'], 
+        dados['preco'], 
+        dados['condicao'], 
+        dados['loja'], 
+        dados['localizacao'], 
+        1 if dados['tem_envio'] else 0, 
+        dados['link'],
+        dados.get('ai_analise', '')
+    ))
+    
+    conn.commit()
+    conn.close()

@@ -1,92 +1,117 @@
-import requests
+import os
+from time import sleep
+import random # Importante para variar o tempo
+import re
 from bs4 import BeautifulSoup
-import time
-import random
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
 
-# Configuração para "enganar" o site e parecer um navegador real
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-}
+def limpar_preco(texto):
+    if not texto: return 0.0
+    apenas_numeros = re.sub(r'[^\d,]', '', texto)
+    apenas_numeros = apenas_numeros.replace(',', '.')
+    try:
+        return float(apenas_numeros)
+    except:
+        return 0.0
 
 def buscar_mercadolivre(modelo):
-    """
-    Busca um modelo específico no Mercado Livre e retorna uma lista de produtos encontrados.
-    """
-    print(f"--- Pesquisando por: {modelo} no Mercado Livre ---")
+    print(f"--- 🕵️ CAÇADOR INICIADO: {modelo} ---")
     
-    # Prepara o termo de busca para a URL (ex: 'Roland FP-30X' vira 'Roland-FP-30X')
-    termo_url = modelo.replace(" ", "-")
-    url = f"https://lista.mercadolivre.com.br/instrumentos-musicais/{termo_url}_NoIndex_True"
+    # Cria o caminho absoluto para a pasta de perfil dentro do projeto
+    caminho_projeto = os.getcwd()
+    caminho_perfil = os.path.join(caminho_projeto, "chrome_perfil")
+    
+    chrome_options = Options()
+    # chrome_options.add_argument("--headless") 
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled") 
+    chrome_options.add_argument("--log-level=3")
+    
+    # --- NOVIDADE: PERSISTÊNCIA DE DADOS ---
+    # Isso cria uma pasta 'chrome_perfil' e salva cookies/cache lá.
+    chrome_options.add_argument(f"user-data-dir={caminho_perfil}")
+    
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    
+    resultados = []
 
     try:
-        response = requests.get(url, headers=HEADERS)
+        url = f"https://lista.mercadolivre.com.br/{modelo.replace(' ', '-')}"
+        # print(f"Acessando: {url}") # Menos verboso
+        driver.get(url)
         
-        if response.status_code != 200:
-            print(f"Erro ao acessar a página. Código: {response.status_code}")
-            return []
-
-        # O 'sopa' (soup) é o objeto que contém o HTML da página organizado
-        soup = BeautifulSoup(response.content, 'html.parser')
+        # --- DICA DE SEGURANÇA ---
+        # Aumentamos o tempo de espera aleatório para parecer mais humano
+        tempo_espera = random.uniform(4, 7) 
+        sleep(tempo_espera)
         
-        # Encontra todos os cartões de produtos (a classe pode mudar, mas esta é a padrão atual)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        
         produtos_html = soup.find_all('li', class_='ui-search-layout__item')
-        
-        resultados = []
+        if not produtos_html:
+            produtos_html = soup.find_all('div', class_='ui-search-result__wrapper')
+        if not produtos_html:
+            produtos_html = soup.find_all('div', class_='andes-card')
+            
+        # print(f"Itens detectados: {len(produtos_html)}")
 
         for produto in produtos_html:
             try:
-                # 1. Título
+                # TÍTULO
                 titulo_elem = produto.find('h2', class_='ui-search-item__title')
-                if not titulo_elem: continue # Pula se não tiver título
+                if not titulo_elem: titulo_elem = produto.find('a', class_='ui-search-item__group__element')
+                if not titulo_elem: titulo_elem = produto.find('h3')
+                
+                if not titulo_elem: continue
                 titulo = titulo_elem.text.strip()
 
-                # 2. Link
+                # LINK
                 link_elem = produto.find('a', class_='ui-search-link')
-                link = link_elem['href']
+                if not link_elem: link_elem = produto.find('a')
+                link = link_elem['href'] if link_elem else "Link não encontrado"
 
-                # 3. Preço
-                # O preço no ML é dividido em partes, pegamos o container de preço
-                preco_elem = produto.find('span', class_='andes-money-amount__fraction')
-                preco_texto = preco_elem.text.replace('.', '').strip() if preco_elem else "0"
+                # PREÇO
+                preco_final = 0.0
+                price_container = produto.find('div', class_='ui-search-price__second-line')
+                if not price_container: price_container = produto
                 
-                # 4. Frete e Localização (Informações extras)
-                # Procuramos textos que indiquem frete ou local
-                infos_extras = produto.text
-                tem_frete_gratis = "Frete grátis" in infos_extras or "Chegará grátis" in infos_extras
+                preco_elem = price_container.find('span', class_='andes-money-amount__fraction')
+                if preco_elem:
+                    preco_final = limpar_preco(preco_elem.text)
                 
-                # Adiciona à lista de resultados
+                if preco_final < 500: continue
+
+                # LOCALIZAÇÃO
+                texto_completo = produto.text.lower()
+                tem_frete_gratis = "frete grátis" in texto_completo or "chegará grátis" in texto_completo
+                local_elem = produto.find('span', class_='ui-search-item__location')
+                localizacao = local_elem.text.strip() if local_elem else "Local não informado"
+
                 resultados.append({
                     'modelo_buscado': modelo,
                     'titulo': titulo,
-                    'preco': float(preco_texto),
+                    'preco': preco_final,
                     'link': link,
                     'tem_frete': tem_frete_gratis,
+                    'localizacao': localizacao,
                     'site': 'Mercado Livre'
                 })
 
             except Exception as e:
-                # Se der erro num item específico, pula para o próximo mas avisa
-                # print(f"Erro ao ler um item: {e}") 
                 continue
 
-        print(f"Encontrados {len(resultados)} anúncios para {modelo}.")
-        return resultados
-
     except Exception as e:
-        print(f"Erro crítico na busca: {e}")
-        return []
-
-# --- ÁREA DE TESTE ---
-# Este bloco só roda se executares o arquivo diretamente. 
-# Serve para testar se o scraper está a funcionar.
-if __name__ == "__main__":
-    # Teste com um dos modelos da tua lista
-    teste = buscar_mercadolivre("Roland FP-30X")
+        print(f"Erro no Scraper: {e}")
     
-    # Mostra os 3 primeiros resultados encontrados
-    print("\n--- RESULTADOS DO TESTE (Top 3) ---")
-    for item in teste[:3]:
-        print(f"Produto: {item['titulo']}")
-        print(f"Preço: R$ {item['preco']}")
-        print(f"Frete Grátis? {'Sim' if item['tem_frete'] else 'Não detectado'}")
-        print("-" * 30)
+    finally:
+        driver.quit()
+
+    return resultados
+
+if __name__ == "__main__":
+    # Teste rápido
+    dados = buscar_mercadolivre("Roland FP-30X")
+    print(f"Encontrados: {len(dados)}")
