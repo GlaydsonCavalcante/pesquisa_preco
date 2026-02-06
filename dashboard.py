@@ -5,152 +5,133 @@ import plotly.express as px
 import os
 
 # Configuração da Página
-st.set_page_config(page_title="Piano Scout Analytics", layout="wide")
+st.set_page_config(page_title="Piano Scout Manager", layout="wide")
 
-st.title("🎹 Piano Scout: Cockpit de Inteligência")
 st.markdown("""
 <style>
-    .big-font { font-size:20px !important; }
-    .justificativa { background-color: #f0f2f6; padding: 15px; border-radius: 10px; border-left: 5px solid #4CAF50; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #f0f2f6; border-radius: 4px 4px 0 0; gap: 1px; padding-top: 10px; padding-bottom: 10px; }
+    .stTabs [aria-selected="true"] { background-color: #FFFFFF; border-bottom: 2px solid #4CAF50; }
 </style>
 """, unsafe_allow_html=True)
 
 DB_PATH = os.path.join("data", "historico_precos.db")
 CSV_PATH = os.path.join("data", "modelos_alvo.csv")
 
-def carregar_dados_completos():
-    if not os.path.exists(DB_PATH): return None, None
+def carregar_dados():
     conn = sqlite3.connect(DB_PATH)
-    df_precos = pd.read_sql_query("SELECT * FROM precos", conn)
+    df = pd.read_sql_query("SELECT * FROM precos", conn)
     conn.close()
+    return df
 
-    if not os.path.exists(CSV_PATH): return None, None
-    df_ref = pd.read_csv(CSV_PATH)
+def salvar_alteracoes(df_editado):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    # Atualiza o status 'ativo' no banco
+    for index, row in df_editado.iterrows():
+        cursor.execute("UPDATE precos SET ativo = ? WHERE id = ?", (row['ativo'], row['id']))
+    conn.commit()
+    conn.close()
+    st.success("Alterações salvas com sucesso!")
+    st.cache_data.clear()
 
-    df_full = pd.merge(df_precos, df_ref, on='modelo', how='left')
-    df_full['data_consulta'] = pd.to_datetime(df_full['data_consulta'])
+# --- CARREGAMENTO INICIAL ---
+if not os.path.exists(DB_PATH) or not os.path.exists(CSV_PATH):
+    st.error("Arquivos de dados não encontrados.")
+    st.stop()
+
+df_precos = carregar_dados()
+df_ref = pd.read_csv(CSV_PATH)
+
+# Garante que a coluna 'priorizado' existe no CSV (trata erro se não existir)
+if 'priorizado' not in df_ref.columns:
+    df_ref['priorizado'] = False
+
+# Merge dos dados
+df_full = pd.merge(df_precos, df_ref, on='modelo', how='left')
+df_full['data_consulta'] = pd.to_datetime(df_full['data_consulta'])
+
+# Calcula Custo Total (Preço + Reparo)
+df_full['custo_total'] = df_full['preco'] + df_full['custo_reparo']
+
+# Filtra apenas ativos para a ANÁLISE (mas mostra tudo na gestão)
+df_ativos = df_full[df_full['ativo'] == 1].copy()
+
+# --- INTERFACE ---
+tab1, tab2 = st.tabs(["📊 Análise de Oportunidades", "📝 Gestão da Base de Dados"])
+
+# --- ABA 1: GRÁFICOS ---
+with tab1:
+    st.title("Cockpit de Inteligência")
     
-    return df_full, df_ref
-
-def calcular_estatisticas(df_modelo):
-    if df_modelo.empty: return None
-    stats = {
-        'min': df_modelo['preco'].min(),
-        'mediana': df_modelo['preco'].median(),
-        'max': df_modelo['preco'].max(),
-        'qtd': len(df_modelo)
-    }
-    return stats
-
-# --- LÓGICA DO DASHBOARD ---
-df_full, df_ref = carregar_dados_completos()
-
-if df_full is not None and not df_full.empty:
+    # Lógica de Cores Personalizada
+    # Priorizados = Dourado, Normais = Azul
+    df_ativos['cor_legenda'] = df_ativos.apply(
+        lambda x: '⭐ PRIORIDADE' if x['priorizado'] == True or str(x['priorizado']).lower() == 'sim' else x['condicao'], 
+        axis=1
+    )
     
-    data_recente = df_full['data_consulta'].max().strftime('%Y-%m-%d')
-    st.info(f"📅 Visualizando dados consolidados até: **{data_recente}**")
-
-    st.subheader("📈 Matriz de Valor: Qualidade vs. Preço")
+    # Índice R$/Score para o Mouseover
+    df_ativos['indice_custo_beneficio'] = df_ativos['custo_total'] / df_ativos['score_geral']
     
-    df_grafico = df_full[df_full['data_consulta'] == df_full['data_consulta'].max()].copy()
-    
-    # Prepara tamanho da bolha
-    # Adiciona um pequeno valor para evitar divisão por zero se preço for zero
-    df_grafico['tamanho_bolha'] = (1 / (df_grafico['preco'] + 1 / df_grafico['score_geral'])) * 100000
+    # Tamanho da bolha (foco no menor preço)
+    df_ativos['tamanho_bolha'] = (1 / df_ativos['indice_custo_beneficio']) * 50
 
-    # --- CORREÇÃO AQUI: REMOVIDO 'TITULO' DO HOVER_DATA ---
     fig = px.scatter(
-        df_grafico,
+        df_ativos,
         x="score_geral",
-        y="preco",
-        color="condicao",
+        y="custo_total",
+        color="cor_legenda",
+        color_discrete_map={
+            "⭐ PRIORIDADE": "#FFD700", # Dourado
+            "Novo": "#2E86C1",        # Azul
+            "Usado": "#28B463"        # Verde
+        },
         size="tamanho_bolha",
         hover_name="modelo",
         hover_data={
-            "loja": True,
-            "link": False,
             "tamanho_bolha": False,
-            "score_geral": True,
-            "preco": ":.2f"
+            "cor_legenda": False,
+            "estado_detalhado": True,
+            "custo_reparo": ":.2f",
+            "indice_custo_beneficio": ":.2f",
+            "custo_total": ":.2f"
         },
         text="modelo",
-        title="Dispersão de Oportunidades",
-        labels={"score_geral": "Score (Qualidade)", "preco": "Preço (R$)", "condicao": "Condição"},
+        title="Dispersão: Score x Valor Total (Inclui Reparos)",
         height=600
     )
     
     fig.update_traces(textposition='top center')
-    fig.update_layout(
-        xaxis=dict(range=[60, 100]), 
-        yaxis=dict(autorange="reversed"), 
-        legend_title="Estado"
+    fig.update_layout(yaxis=dict(autorange="reversed")) # Menor preço no topo
+    st.plotly_chart(fig, use_container_width=True)
+    
+    st.info("Nota: O valor exibido considera Preço Anunciado + Custo Estimado de Reparo.")
+
+# --- ABA 2: GESTÃO ---
+with tab2:
+    st.header("Gestão de Anúncios")
+    st.markdown("Desmarque a caixa **'ativo'** para remover itens vendidos ou irreais da análise.")
+    
+    # Editor de Dados
+    # Mostramos colunas essenciais
+    cols_gestao = ['id', 'ativo', 'data_consulta', 'modelo', 'preco', 'custo_reparo', 'estado_detalhado', 'link', 'ai_analise']
+    
+    df_editor = st.data_editor(
+        df_precos[cols_gestao],
+        column_config={
+            "ativo": st.column_config.CheckboxColumn(
+                "Ativo?",
+                help="Desmarque para esconder da análise",
+                default=True,
+            ),
+            "link": st.column_config.LinkColumn("Link"),
+            "preco": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
+        },
+        hide_index=True,
+        disabled=["id", "data_consulta", "modelo", "link"], # Bloqueia edição do que é fixo
+        key="editor_dados"
     )
     
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.divider()
-
-    st.subheader("📋 Análise Detalhada por Modelo")
-
-    for index, row in df_ref.iterrows():
-        modelo = row['modelo']
-        score = row['score_geral']
-        
-        dados_modelo = df_full[df_full['modelo'] == modelo]
-        
-        with st.expander(f"🎹 {modelo} (Score: {score})", expanded=False):
-            st.markdown(f"""
-            <div class="justificativa">
-                <b>💡 Avaliação:</b> {row['justificativa']}<br>
-                Mecânica: {row['mecanica']} | Som: {row['som_polifonia']}
-            </div>
-            """, unsafe_allow_html=True)
-            st.write("")
-
-            novos = dados_modelo[dados_modelo['condicao'] == 'Novo']
-            usados = dados_modelo[dados_modelo['condicao'] == 'Usado']
-            
-            stats_novos = calcular_estatisticas(novos)
-            stats_usados = calcular_estatisticas(usados)
-
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.markdown("### 🆕 Novo (Referência)")
-                if stats_novos:
-                    st.metric("Mínimo", f"R$ {stats_novos['min']:,.2f}")
-                    st.caption(f"Mediana: R$ {stats_novos['mediana']:,.2f}")
-                    # Tenta pegar a loja de referência
-                    if 'loja' in novos.columns:
-                        loja = novos.iloc[0]['loja']
-                        st.write(f"🏠 {loja}")
-                else:
-                    st.warning("Sem dados.")
-
-            with col2:
-                st.markdown("### 📦 Usado")
-                if stats_usados:
-                    delta = 0
-                    if stats_novos:
-                        delta = -((stats_novos['min'] - stats_usados['min']) / stats_novos['min']) * 100
-                    
-                    st.metric("Melhor Preço", f"R$ {stats_usados['min']:,.2f}", delta=f"{delta:.1f}% vs Novo")
-                    st.caption(f"Mediana: R$ {stats_usados['mediana']:,.2f}")
-                else:
-                    st.warning("Sem dados.")
-
-            with col3:
-                st.markdown("### 🔗 Links")
-                if not usados.empty:
-                    top_usados = usados.sort_values('preco').head(3)
-                    for i, item in top_usados.iterrows():
-                        # Verifica se 'localizacao' existe no dataframe antes de acessar
-                        local = item['localizacao'] if 'localizacao' in item else "N/A"
-                        
-                        st.markdown(f"""
-                        **R$ {item['preco']:,.2f}** [Ver Anúncio]({item['link']}) | 📍 {local}
-                        """, unsafe_allow_html=True)
-                        st.divider()
-
-else:
-    st.error("Execute 'python main.py' para popular o banco de dados.")
+    if st.button("💾 Salvar Alterações no Banco de Dados"):
+        salvar_alteracoes(df_editor)

@@ -91,11 +91,11 @@ def buscar_mercadolivre(modelo):
                 localizacao = local_elem.text.strip() if local_elem else "Local não informado"
 
                 resultados.append({
-                    'modelo_buscado': modelo,
+                    'modelo': modelo,
                     'titulo': titulo,
                     'preco': preco_final,
                     'link': link,
-                    'tem_frete': tem_frete_gratis,
+                    'tem_envio': tem_frete_gratis,
                     'localizacao': localizacao,
                     'site': 'Mercado Livre'
                 })

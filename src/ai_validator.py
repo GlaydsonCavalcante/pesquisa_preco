@@ -1,62 +1,74 @@
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import time
 import json
+import os
+from dotenv import load_dotenv
 
-# CONFIGURAÇÃO DA IA
-# Substitua pela sua API KEY real
-API_KEY = "COLOQUE_SUA_API_KEY_AQUI"
+# Carrega a chave segura do arquivo .env
+load_dotenv()
+API_KEY = os.getenv("GEMINI_API_KEY")
 
-genai.configure(api_key=API_KEY)
+if not API_KEY:
+    raise ValueError("⚠️ ERRO: Chave API não encontrada no arquivo .env")
 
-# Configuração do Modelo (Flash é mais barato e rápido)
-generation_config = {
-  "temperature": 0.1, # Muito baixa para ser "frio" e preciso
-  "response_mime_type": "application/json",
-}
-
-model = genai.GenerativeModel(
-  model_name="gemini-1.5-flash",
-  generation_config=generation_config,
-)
+# --- NOVA INICIALIZAÇÃO (Padrão 2026) ---
+# A biblioteca nova usa um 'Client' centralizado
+client = genai.Client(api_key=API_KEY)
 
 def validar_com_ia(titulo_anuncio, price, modelo_alvo):
-    """
-    Usa o Gemini para decidir se o anúncio é realmente o piano ou apenas uma peça.
-    """
     prompt = f"""
-    Atue como um especialista em instrumentos musicais.
-    Analise este anúncio do Mercado Livre:
+    Analise este anúncio de instrumento musical.
+    Produto Alvo: {modelo_alvo}
+    Anúncio: {titulo_anuncio} | Preço: R$ {price}
     
-    Produto Alvo: Piano Digital {modelo_alvo}
-    Título do Anúncio: {titulo_anuncio}
-    Preço: R$ {price}
-    
-    Responda em formato JSON:
+    Classifique em JSON:
     {{
-        "eh_o_piano_real": boolean,  // True se for o instrumento completo, False se for peça/aula/acessório/golpe
-        "motivo": "string curta explicando"
+        "eh_o_piano_real": boolean, (False se for peça/aula/acessório/golpe)
+        "estado": "string", (Escolha um: 'novo', 'otimo_estado', 'funcional', 'semifuncional', 'nao_funcional')
+        "custo_reparo_estimado": float, (Se 'semifuncional' ou 'nao_funcional', estime valor de conserto no Brasil. Se ok, 0)
+        "motivo": "string curta"
     }}
     
-    Regras:
-    1. Se for apenas estante, pedal, capa, fonte, placa, ou aula, é FALSE.
-    2. Se o preço for absurdamente baixo (ex: menos de R$ 1000 para um piano de R$ 5000), é FALSE (suspeita de peça ou golpe).
-    3. Se for o piano (mesmo usado), é TRUE.
+    Regras de Estado:
+    - novo: Lacrado/Loja.
+    - otimo_estado: Usado mas perfeito visual e funcional.
+    - funcional: Marcas de uso, mas funciona 100%.
+    - semifuncional: Tecla falhando, som baixo, defeito leve.
+    - nao_funcional: Não liga, defeito grave.
     """
 
     try:
-        # Pequena pausa para não estourar cota da API se rodar muito rápido
-        time.sleep(1) 
+        # Pausa técnica para evitar rate-limit
+        time.sleep(1)
         
-        response = model.generate_content(prompt)
+        # --- CHAMADA ATUALIZADA ---
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-lite', # Atualizado para o modelo da tua lista
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1, # Respostas frias e diretas
+                response_mime_type='application/json' # Garante que volta JSON puro
+            )
+        )
+        
+        # Na nova lib, response.text já traz o conteúdo limpo
         resultado = json.loads(response.text)
         
-        return resultado['eh_o_piano_real'], resultado['motivo']
+        return {
+            "valido": resultado.get('eh_o_piano_real', False),
+            "estado": resultado.get('estado', 'indefinido'),
+            "reparo": resultado.get('custo_reparo_estimado', 0),
+            "motivo": resultado.get('motivo', 'Sem motivo')
+        }
 
     except Exception as e:
-        print(f"⚠️ Erro na IA: {e}. Assumindo falso por segurança.")
-        return False, "Erro na validação IA"
+        # Captura erro de bloqueio de segurança ou rede
+        print(f"⚠️ Erro IA: {e}")
+        return {"valido": False, "motivo": f"Erro Técnico: {str(e)[:50]}...", "reparo": 0, "estado": "erro"}
 
-# Teste rápido
+# Teste Rápido (Só roda se executares este arquivo direto)
 if __name__ == "__main__":
-    print(validar_com_ia("Capa Para Piano Roland Fp-30x", 250.00, "Roland FP-30X"))
-    print(validar_com_ia("Piano Digital Roland Fp-30x Usado", 3800.00, "Roland FP-30X"))
+    print("Teste de conexão com Gemini 2.5 Flash...")
+    res = validar_com_ia("Piano Digital Roland Fp-30x Usado", 3500.00, "Roland FP-30X")
+    print(res)
