@@ -38,12 +38,53 @@ st.markdown("""
 DB_PATH = os.path.join("data", "historico_precos.db")
 CSV_PATH = os.path.join("data", "modelos_alvo.csv")
 
-# --- INICIALIZAÇÃO DE ESTADO (FILTROS PERSISTENTES) ---
-if 'filtro_score' not in st.session_state:
-    st.session_state.filtro_score = (50, 100)
+# --- FUNÇÕES DE CONFIGURAÇÃO (PERSISTÊNCIA) ---
+def init_config_db():
+    """Cria a tabela de configuração se não existir."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS config_dashboard (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            min_score INTEGER DEFAULT 50,
+            max_score INTEGER DEFAULT 100,
+            min_preco REAL DEFAULT 1500.0,
+            max_preco REAL DEFAULT 50000.0
+        )
+    ''')
+    # Garante que existe a linha de configuração padrão
+    cursor.execute("INSERT OR IGNORE INTO config_dashboard (id, min_score, max_score, min_preco, max_preco) VALUES (1, 50, 100, 1500.0, 50000.0)")
+    conn.commit()
+    conn.close()
 
-if 'filtro_preco' not in st.session_state:
-    st.session_state.filtro_preco = (1500.0, 30000.0)
+def get_dashboard_config():
+    """Lê as configurações salvas no banco."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT min_score, max_score, min_preco, max_preco FROM config_dashboard WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {"min_score": row[0], "max_score": row[1], "min_preco": row[2], "max_preco": row[3]}
+    return {"min_score": 50, "max_score": 100, "min_preco": 1500.0, "max_preco": 50000.0}
+
+def save_config_callback():
+    """Salva os valores dos inputs no banco automaticamente."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE config_dashboard 
+        SET min_score = ?, max_score = ?, min_preco = ?, max_preco = ? 
+        WHERE id = 1
+    """, (
+        st.session_state.n_min_score,
+        st.session_state.n_max_score,
+        st.session_state.n_min_preco,
+        st.session_state.n_max_preco
+    ))
+    conn.commit()
+    conn.close()
+    # st.toast("Filtros salvos!", icon="💾") # Opcional: Feedback visual
 
 # --- FUNÇÕES DE DADOS ---
 def carregar_dados():
@@ -51,6 +92,22 @@ def carregar_dados():
     df = pd.read_sql_query("SELECT * FROM precos", conn)
     conn.close()
     return df
+
+def atualizar_status_individual(id_anuncio, novo_status):
+    """Atualiza o status de um único item instantaneamente."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        valor_db = 1 if novo_status else 0
+        # Forçamos int() para garantir que o SQLite encontre o ID correto
+        cursor.execute("UPDATE precos SET ativo = ? WHERE id = ?", (valor_db, int(id_anuncio)))
+        conn.commit()
+        if cursor.rowcount == 0:
+            print(f"⚠️ Aviso: Nenhuma linha alterada para o ID {id_anuncio}")
+        conn.close()
+        st.cache_data.clear() # Limpa cache para forçar atualização visual
+    except Exception as e:
+        st.error(f"Erro ao atualizar banco: {e}")
 
 def salvar_alteracoes_db(df_editado):
     conn = sqlite3.connect(DB_PATH)
@@ -61,17 +118,6 @@ def salvar_alteracoes_db(df_editado):
     conn.close()
     st.success("Status atualizado!")
     st.cache_data.clear()
-
-def atualizar_status_individual(id_anuncio, novo_status):
-    """Atualiza o status de um único item instantaneamente."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    # Converte booleano para 1 ou 0
-    valor_db = 1 if novo_status else 0
-    cursor.execute("UPDATE precos SET ativo = ? WHERE id = ?", (valor_db, id_anuncio))
-    conn.commit()
-    conn.close()
-    st.cache_data.clear() # Limpa o cache para o gráfico atualizar
 
 def salvar_csv_editado(df_novo):
     try:
@@ -88,10 +134,13 @@ def media_geometrica(series):
     if len(arr) == 0: return 0
     return np.exp(np.mean(np.log(arr)))
 
-# --- PROCESSAMENTO ---
+# --- PROCESSAMENTO INICIAL ---
 if not os.path.exists(DB_PATH) or not os.path.exists(CSV_PATH):
     st.error("Dados não encontrados. Rode o main.py primeiro.")
     st.stop()
+
+# Inicializa DB de Configuração
+init_config_db()
 
 try:
     df_precos = carregar_dados()
@@ -107,10 +156,8 @@ df_full = pd.merge(df_precos, df_ref_full, on='modelo_key', how='left', suffixes
 df_full['custo_total'] = df_full['preco'] + df_full['custo_reparo']
 df_full['ativo'] = df_full['ativo'].apply(lambda x: x in [1, '1', True, 'True'])
 
-# Base bruta de ativos
 df_ativos_raw = df_full[df_full['ativo'] == True].copy()
 
-# Estatísticas Gerais
 stats_mercado = df_ativos_raw.groupby('modelo_key')['custo_total'].agg(
     Minimo='min', 
     Maximo='max', 
@@ -122,29 +169,39 @@ stats_mercado = df_ativos_raw.groupby('modelo_key')['custo_total'].agg(
 tab1, tab2, tab3 = st.tabs(["📊 Matriz de Decisão", "📝 Gestão de Anúncios", "📚 Editor AHSD (CSV)"])
 
 with tab1:
-    # --- ÁREA DE FILTROS ---
-    with st.expander("🎛️ Filtros de Visualização (Persistentes)", expanded=False):
-        c_f1, c_f2 = st.columns(2)
-        with c_f1:
-            st.session_state.filtro_score = st.slider(
-                "Faixa de Score (Qualidade Técnica)",
-                min_value=0, max_value=100,
-                value=st.session_state.filtro_score,
-                key="slider_score"
-            )
-        with c_f2:
-            max_price_db = int(df_ativos_raw['custo_total'].max()) if not df_ativos_raw.empty else 50000
-            st.session_state.filtro_preco = st.slider(
-                "Faixa de Preço Total (R$)",
-                min_value=0.0, max_value=float(max_price_db),
-                value=st.session_state.filtro_preco,
-                step=100.0,
-                key="slider_preco"
-            )
+    # --- ÁREA DE FILTROS (Inputs Numéricos Persistentes) ---
+    current_config = get_dashboard_config()
+    
+    c_f1, c_f2, c_f3, c_f4 = st.columns(4)
+    
+    with c_f1:
+        st.number_input(
+            "Min Score", min_value=0, max_value=100, 
+            value=current_config['min_score'], 
+            key='n_min_score', on_change=save_config_callback
+        )
+    with c_f2:
+        st.number_input(
+            "Max Score", min_value=0, max_value=100, 
+            value=current_config['max_score'], 
+            key='n_max_score', on_change=save_config_callback
+        )
+    with c_f3:
+        st.number_input(
+            "Min Preço (R$)", min_value=0.0, step=100.0,
+            value=float(current_config['min_preco']), 
+            key='n_min_preco', on_change=save_config_callback
+        )
+    with c_f4:
+        st.number_input(
+            "Max Preço (R$)", min_value=0.0, step=100.0,
+            value=float(current_config['max_preco']), 
+            key='n_max_preco', on_change=save_config_callback
+        )
 
-    # Aplicação dos Filtros
-    min_s, max_s = st.session_state.slider_score
-    min_p, max_p = st.session_state.slider_preco
+    # Aplicação dos Filtros (Usando Session State que já está atualizado)
+    min_s, max_s = st.session_state.n_min_score, st.session_state.n_max_score
+    min_p, max_p = st.session_state.n_min_preco, st.session_state.n_max_preco
     
     df_plot_filtered = df_ativos_raw[
         (df_ativos_raw['score_geral'] >= min_s) & 
@@ -210,16 +267,13 @@ with tab1:
                 title="<b>Matriz de Decisão AHSD: Qualidade vs Investimento</b>"
             )
 
-            # --- CORREÇÃO AQUI: Troquei use_container_width=True por width="stretch" ---
             event = st.plotly_chart(fig, width="stretch", on_select="rerun", selection_mode="points")
         else:
             st.warning("Nenhum modelo encontrado dentro da faixa de filtros selecionada.")
             event = None
 
-    # --- PAINEL LATERAL APRIMORADO ---
     with col_detalhes:
         selected_key = None
-        # Lógica de seleção (mantida)
         if event and len(event['selection']['points']) > 0:
             selected_key = event['selection']['points'][0]['customdata'][0]
         elif not df_plot.empty:
@@ -229,29 +283,28 @@ with tab1:
             row = df_plot[df_plot['modelo_key'] == selected_key].iloc[0]
             stats = stats_mercado[stats_mercado['modelo_key'] == selected_key].iloc[0]
             
-            # --- TÍTULO E PREÇO ---
             st.markdown(f"### {row['modelo']}")
             st.markdown(f"💰 **R$ {row['custo_total']:.0f}**")
             
-            # --- NOVO CONTROLE DE ATIVAÇÃO ---
-            st.write("") # Espaçamento
+            st.write("") 
             
-            # O Toggle reflete o estado atual. Se o usuário mudar, executa o if.
-            # Usamos uma key única baseada no ID para não confundir o Streamlit
-            ativo_toggle = st.toggle(
-                "✅ Anúncio Ativo no Gráfico", 
-                value=True, # Se está aparecendo aqui, é porque está True no DB
-                key=f"toggle_{row['id']}"
-            )
+            # Botão simples: clicou, removeu. Sem loop.
+            col_btn1, col_btn2 = st.columns([1, 4])
+            with col_btn2:
+                if st.button("❌ Desativar Anúncio", key=f"btn_del_{row['id']}", use_container_width=True, type="secondary"):
+                    atualizar_status_individual(row['id'], False)
+                    st.toast(f"Anúncio removido!", icon="🗑️")
+                    import time
+                    time.sleep(0.5) # Tempo para ler a mensagem
+                    st.rerun()
             
-            if not ativo_toggle: # Se o usuário DESMARCAR
+            if not ativo_toggle:
                 atualizar_status_individual(row['id'], False)
-                st.toast(f"🚫 Anúncio removido: {row['modelo']}", icon="🗑️")
+                st.toast(f"Anúncio removido!", icon="🗑️")
                 import time
-                time.sleep(0.5) # Pequena pausa para processar
-                st.rerun() # Recarrega a página e o ponto some
-            
-            # --- DADOS DETALHADOS ---
+                time.sleep(0.5) 
+                st.rerun()
+
             st.markdown(f"🏬 **Loja:** {row.get('loja', 'Não Inf.')}")
             estado_fmt = str(row.get('estado_detalhado', '')).replace('_', ' ').title()
             st.markdown(f"🏷️ **Estado:** {estado_fmt}")
@@ -265,11 +318,7 @@ with tab1:
             c3.markdown(f"<div class='metric-box'><div class='metric-label'>Score</div><div class='metric-value'>{row['score_geral']:.0f}</div></div>", unsafe_allow_html=True)
             
             st.info(row['justificativa'])
-            
-            # Botão do Link
-            st.link_button("🔗 Ver Anúncio Original", row['link'], width="stretch")
-            
-            st.caption(f"ID: {row['id']} | Atualizado: {row['data_consulta']}")
+            st.link_button("🔗 Ver Anúncio", row['link'], width="stretch")
         else:
             st.info("Ajuste os filtros para ver modelos.")
 
@@ -279,18 +328,13 @@ with tab2:
     df_editor_db = st.data_editor(
         df_precos[cols_gestao],
         column_config={"ativo": st.column_config.CheckboxColumn("Ativo?"), "link": st.column_config.LinkColumn("Link")},
-        hide_index=True, 
-        disabled=["id", "data_consulta", "modelo", "link"], 
-        key="editor_db"
-        # use_container_width removido, padrão já é adequado ou use width="stretch" se necessário
+        hide_index=True, disabled=["id", "data_consulta", "modelo", "link"], key="editor_db"
     )
     if st.button("💾 Salvar DB"): salvar_alteracoes_db(df_editor_db)
 
 with tab3:
     st.header("📚 Editor CSV (Régua Técnica)")
-    # --- CORREÇÃO AQUI ---
     df_editor_csv = st.data_editor(df_ref_full, hide_index=True, width="stretch", key="editor_csv")
-    
     if st.button("💾 Salvar CSV"):
         df_para_salvar = df_editor_csv.copy()
         if 'modelo_key' in df_para_salvar.columns: df_para_salvar.drop(columns=['modelo_key'], inplace=True)

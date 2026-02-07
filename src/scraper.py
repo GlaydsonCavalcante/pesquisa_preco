@@ -1,6 +1,5 @@
-# ... (imports mantidos iguais) ...
 import os
-from time import sleep
+import time
 import random
 import re
 from bs4 import BeautifulSoup
@@ -19,35 +18,41 @@ def limpar_preco(texto):
         return 0.0
 
 def buscar_mercadolivre(modelo_pai, termo_busca):
-    """
-    modelo_pai: O nome oficial do CSV (ex: Roland FP-30X)
-    termo_busca: O que digitamos na barra de busca (ex: FP-30X)
-    """
-    
-    # Configuração do caminho do perfil (MANTIDA IGUAL)
     caminho_projeto = os.getcwd()
     caminho_perfil = os.path.join(caminho_projeto, "chrome_perfil")
     
     chrome_options = Options()
     chrome_options.add_argument("--start-maximized")
-    chrome_options.add_argument("--no-sandbox")                  # Adicionado
-    chrome_options.add_argument("--disable-dev-shm-usage")       # Adicionado
-    chrome_options.add_argument("--remote-debugging-port=9222")  # Adicionado (A CURA)
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled") 
     chrome_options.add_argument("--log-level=3")
     chrome_options.add_argument(f"user-data-dir={caminho_perfil}")
     
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    driver = None
     
+    # --- RETRY LOGIC ---
+    for tentativa in range(3):
+        try:
+            servico = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=servico, options=chrome_options)
+            break
+        except Exception as e:
+            print(f"⚠️ Erro Driver ML (Tentativa {tentativa+1}): {e}")
+            time.sleep(2)
+            
+    if not driver:
+        print("❌ Falha ao abrir navegador para ML.")
+        return []
+
     resultados = []
 
     try:
-        # Usa o termo_busca para a URL
         url = f"https://lista.mercadolivre.com.br/{termo_busca.replace(' ', '-')}"
         driver.get(url)
         
         tempo_espera = random.uniform(3, 6) 
-        sleep(tempo_espera)
+        time.sleep(tempo_espera)
         
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         
@@ -59,7 +64,6 @@ def buscar_mercadolivre(modelo_pai, termo_busca):
 
         for produto in produtos_html:
             try:
-                # Extração (MANTIDA IGUAL)
                 titulo_elem = produto.find('h2', class_='ui-search-item__title')
                 if not titulo_elem: titulo_elem = produto.find('a', class_='ui-search-item__group__element')
                 if not titulo_elem: titulo_elem = produto.find('h3')
@@ -85,8 +89,8 @@ def buscar_mercadolivre(modelo_pai, termo_busca):
                 localizacao = local_elem.text.strip() if local_elem else "Local não informado"
 
                 resultados.append({
-                    'modelo': modelo_pai,         # SALVA O NOME OFICIAL
-                    'termo_usado': termo_busca,   # SALVA COMO ACHAMOS
+                    'modelo': modelo_pai,
+                    'termo_usado': termo_busca,
                     'titulo': titulo,
                     'preco': preco_final,
                     'link': link,
@@ -99,9 +103,10 @@ def buscar_mercadolivre(modelo_pai, termo_busca):
                 continue
 
     except Exception as e:
-        print(f"Erro no Scraper: {e}")
+        print(f"Erro no Scraper ML: {e}")
     
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
     return resultados
