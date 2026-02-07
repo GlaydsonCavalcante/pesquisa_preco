@@ -86,34 +86,50 @@ with tab1:
             df_chart = df_plot.loc[idx_melhores].reset_index(drop=True)
             
             # Legenda e Cores das Bolhas
-            df_chart['legenda'] = df_chart.apply(
-                lambda x: '⭐ PRIORIDADE' if str(x.get('priorizado', False)).lower() in ['true', 'sim'] else x['condicao'], axis=1
-            )
+            MAPA_CORES = {
+                "⭐ PRIORIDADE": "#FFD700",  # Dourado
+                "Novo": "#2980B9",           # Azul
+                "Ótimo Estado": "#27AE60",   # Verde Forte
+                "Funcional": "#F39C12",      # Laranja
+                "Semifuncional": "#D35400",  # Laranja Escuro
+                "Não Funcional": "#C0392B"   # Vermelho
+            }
+
+            def obter_legenda_detalhada(row):
+                # 1. Prioridade ganha de tudo
+                if str(row.get('priorizado', False)).lower() in ['true', 'sim']:
+                    return "⭐ PRIORIDADE"
+                
+                # 2. Mapeia o estado_detalhado do banco para o nome bonito
+                estado_bd = str(row.get('estado_detalhado', '')).lower()
+                
+                if 'novo' in estado_bd: return "Novo"
+                if 'otimo' in estado_bd or 'ótimo' in estado_bd: return "Ótimo Estado"
+                if 'semi' in estado_bd: return "Semifuncional"
+                if 'nao' in estado_bd or 'não' in estado_bd: return "Não Funcional"
+                return "Funcional" # Padrão (cobre 'funcional' e 'usado')
+
+            df_chart['legenda'] = df_chart.apply(obter_legenda_detalhada, axis=1)
             
-            # Limites e Pontos Médios para os Quadrantes
+            # Limites e Pontos Médios (Mantém a lógica de quadrantes que já tens)
             min_s, max_s = df_chart['score_geral'].min(), df_chart['score_geral'].max()
             min_p, max_p = df_chart['custo_total'].min(), df_chart['custo_total'].max()
-            
-            # Ajuste de margem para não cortar as bolhas
             margem_x = 5 if min_s == max_s else (max_s - min_s) * 0.1
             margem_y = 500 if min_p == max_p else (max_p - min_p) * 0.1
-            
-            # Definição dos eixos reais do gráfico
             x_start, x_end = min_s - margem_x, max_s + margem_x
             y_start, y_end = min_p - margem_y, max_p + margem_y
-            
             mid_x = (x_end + x_start) / 2
             mid_y = (y_end + y_start) / 2
 
             fig = px.scatter(
                 df_chart, x="score_geral", y="custo_total", color="legenda",
-                color_discrete_map={"⭐ PRIORIDADE": "#FFD700", "Novo": "#2E86C1", "Usado": "#28B463"},
-                text="modelo", # Nome acima da bolha
+                color_discrete_map=MAPA_CORES, # <--- AQUI É A MUDANÇA CHAVE NO PLOT
+                text="modelo",
                 hover_name="modelo",
                 custom_data=['modelo_key', 'id'],
-                height=650, title="<b>Matriz Qualidade vs Preço</b>"
+                height=650, title="<b>Matriz Qualidade vs Preço (Detalhada)</b>"
             )
-
+            
             # CONFIGURAÇÃO: Bolhas tamanho 12 e Texto Acima
             fig.update_traces(
                 textposition='top center',
