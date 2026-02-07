@@ -78,9 +78,45 @@ if __name__ == "__main__":
 def analisar_novo_modelo_ahsd(nome_modelo, titulo_anuncio):
     prompt = f"""
     ###CONTEXTO
-    Atue como um especialista em engenharia de instrumentos musicais para usuários com Altas Habilidades/Superdotação (QI 140+)...
-    [RESTO DO SEU PROMPT REFINADO AQUI]
+    Atue como um especialista em engenharia de instrumentos musicais para usuários com Altas Habilidades/Superdotação (QI 140+). 
+    Sua tarefa é avaliar um novo modelo de piano digital utilizando estritamente a mesma régua técnica aplicada anteriormente.
+    Os Critérios de Pontuação (0-100) são:
+    Fidelidade Mecânica (Peso 45%): Sensores triplos, escapamento (let-off), pivot e realismo do martelo.
+    Riqueza Harmônica e Polifonia (Peso 30%): Modelagem de ressonância e teto de polifonia (mínimo ideal > 128). 
+    Capacidade de Parametrização (Peso 25%): Profundidade de edição (EQ, compressores, Virtual Technician). 
+
+    Utilize os seguintes exemplos como BASE DE CALIBRAÇÃO (Yardstick):
+    modelo,mecanica,som_polifonia,customizacao,score_geral,justificativa
+    Roland FP-90X,98,96,92,96,"Ação PHA-50 híbrida e polifonia ilimitada para piano, ideal para processamento sensorial de alta fidelidade."
+    Roland FP-30X,88,85,80,85,"Polifonia de 256 notas e ação PHA-4, garantindo longevidade técnica para estudos avançados."
+    Nux NPK-20,83,82,97,86,"Insuperável em parametrização na sua faixa, com equalizador de 9 bandas e compressão ajustável."
+    Kawai ES120,82,89,78,83,"Motor Harmonic Imaging com Virtual Technician para ajuste fino de 17 parâmetros de ressonância."
+    Yamaha P-145,72,65,60,67,"Polifonia de 64 notas é um gargalo para a capacidade de processamento AHSD."
+    Casio CDP-S110,65,68,40,60,"Mecânica simplificada com pivot curto que pode frustrar a evolução rápida."
+
+    ###DADOS PARA ANÁLISE
+    Avalie o modelo: {nome_modelo} baseado nos dados: {titulo_anuncio}.
+
+    ###INSTRUÇÕES DE RESPOSTA
+    Gere uma tabela de notas para o novo modelo.
+    Calcule o Score Geral AHSD ponderado.
+    Apresente uma Justificativa Analítica comparando o novo modelo com os marcos acima 
+        (ex: 'Mecânica italiana Fatar e polifonia de 512 notas, oferecendo teto técnico elevado.')
+        (ex: 'Motor T2L com amostragem XXL de 15 segundos sem loops, detectável por ouvidos AHSD.')
+    Dê um Veredito de Investimento focado em evitar o 'gasto duplo' para um aluno que aprende rápido.
+    Responda estritamente em JSON:
+    {{
+        "modelo": "{nome_modelo}",
+        "mecanica": int,
+        "som_polifonia": int,
+        "customizacao": int,
+        "score_geral": float,
+        "justificativa": "Análise comparativa curta",
+        "veredito": "Explicação sobre evitar gasto duplo",
+        "priorizado": false
+    }}
     """
+   
     try:
         # Chamada ao cliente Gemini (Flash Lite ou Preview)
         response = client.models.generate_content(
@@ -95,5 +131,3 @@ def analisar_novo_modelo_ahsd(nome_modelo, titulo_anuncio):
     except Exception as e:
         print(f"⚠️ Erro na análise AHSD: {e}")
         return None
-    
-    # Chamada ao gemini-3-flash-preview aqui...

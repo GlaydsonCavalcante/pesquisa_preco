@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import time
+import csv  # <--- IMPORTANTE: Adicionado para controlar as aspas
 from datetime import datetime
 from ai_validator import analisar_novo_modelo_ahsd
 from scraper import buscar_mercadolivre 
@@ -20,15 +21,18 @@ def executar_descoberta():
         itens = buscar_mercadolivre("DESCOBERTA", termo)
         
         for item in itens:
-            # Recarrega a base para saber quem já foi avaliado (incluindo os rejeitados anteriormente)
-            df_atual = pd.read_csv(CSV_PATH)
+            # Recarrega a base com tratamento de erro robusto
+            try:
+                df_atual = pd.read_csv(CSV_PATH, on_bad_lines='skip') # <--- Proteção na leitura
+            except:
+                df_atual = pd.DataFrame(columns=['modelo']) # Fallback se o arquivo sumir
+                
             modelos_na_base = df_atual['modelo'].str.upper().tolist()
             
             titulo_original = item['titulo']
-            # Extração simples para checagem rápida
             nome_sugerido = " ".join(titulo_original.split()[:4]).upper()
             
-            # 1. VERIFICAÇÃO DE MEMÓRIA (Evita gasto de API)
+            # 1. VERIFICAÇÃO DE MEMÓRIA
             if any(m in nome_sugerido for m in modelos_na_base):
                 continue
                 
@@ -48,17 +52,16 @@ def executar_descoberta():
                 # 3. LOG DE DECISÃO NA TELA
                 if score >= 50:
                     status_icon = "✅"
-                    status_msg = "APROVADO (Rumo ao Dashboard)"
+                    status_msg = f"APROVADO | Score: {score}"
                     count_aprovados += 1
                 else:
                     status_icon = "❌"
-                    status_msg = "REJEITADO (Abaixo do teto técnico)"
+                    status_msg = f"REJEITADO | Score: {score}"
                 
-                print(f"   {status_icon} Score: {score} | {status_msg}")
-                print(f"   📝 Motivo: {justificativa}")
-                if veredito: print(f"   ⚖️ Veredito: {veredito}")
+                print(f"   {status_icon} {status_msg}")
+                print(f"   📝 Motivo: {justificativa[:100]}...") # Trunca na tela para não poluir
 
-                # 4. REGISTRO NA BASE DE DADOS (Salva todos para memória futura)
+                # 4. REGISTRO SEGURO NO CSV
                 nova_linha = {
                     "modelo": analise['modelo'],
                     "mecanica": analise['mecanica'],
@@ -70,18 +73,24 @@ def executar_descoberta():
                 }
                 
                 df_temp = pd.DataFrame([nova_linha])
-                df_temp.to_csv(CSV_PATH, mode='a', header=False, index=False)
+                
+                # AQUI ESTÁ A CORREÇÃO CRUCIAL: quoting=csv.QUOTE_NONNUMERIC
+                df_temp.to_csv(
+                    CSV_PATH, 
+                    mode='a', 
+                    header=False, 
+                    index=False, 
+                    quoting=csv.QUOTE_NONNUMERIC 
+                )
             
-            # 5. MARCADOR DE TEMPO E PROGRESSO (A cada intervalo de itens ou tempo)
             if count_avaliados % 5 == 0:
                 elapsed = time.time() - start_time
-                print(f"\n--- ⏱️ Progressão: {count_avaliados} analisados | {count_aprovados} aprovados | Tempo: {elapsed:.0f}s ---")
+                print(f"\n--- ⏱️ Status: {count_avaliados} avaliados | {count_aprovados} novos | {elapsed:.0f}s ---")
 
-            time.sleep(1.5) # Pausa de segurança para a API
+            time.sleep(1.5)
 
     total_time = time.time() - start_time
-    print(f"\n🏁 Descoberta finalizada em {total_time:.0f}s.")
-    print(f"📊 Resumo: {count_avaliados} novos modelos catalogados.")
+    print(f"\n🏁 Descoberta finalizada em {total_time:.0f}s. Novos modelos: {count_aprovados}")
 
 if __name__ == "__main__":
     executar_descoberta()

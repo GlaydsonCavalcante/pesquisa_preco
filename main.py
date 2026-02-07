@@ -7,24 +7,12 @@ import random
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from database import criar_tabela, salvar_no_banco
-from scraper import buscar_mercadolivre
-from stores_br import executar_busca_lojas_br
-from ai_validator import validar_com_ia
-from discovery_engine import executar_descoberta
+from src.database import criar_tabela, salvar_no_banco
+from src.scraper import buscar_mercadolivre
+from src.stores_br import executar_busca_lojas_br
+from src.ai_validator import validar_com_ia
+from src.discovery_engine import executar_descoberta
 
-def job():
-    print("\n--- 🚀 INICIANDO NOVA BATERIA DE BUSCAS ---")
-    
-    # 1. Antes de buscar preços, tenta descobrir modelos novos
-    try:
-        executar_descoberta()
-    except Exception as e:
-        print(f"⚠️ Falha na fase de descoberta: {e}")
-
-    # 2. Segue com a rotina principal de monitoramento de preços
-    rotina_principal()
-    
 # --- VARIÁVEIS GLOBAIS DE CONTROLE ---
 INICIO_EXECUCAO = time.time()
 
@@ -50,14 +38,11 @@ ultima_busca = {
 
 def obter_status_painel():
     """Gera a string do painel com tempo e contadores."""
-    # Calcula tempo decorrido
     delta = time.time() - INICIO_EXECUCAO
     tempo_str = str(timedelta(seconds=int(delta)))
     
-    # Formata os contadores
-    # Ex: [Total: 12] (Novo: 2 | Ótimo: 5 | Func: 3 | Semi: 1 | Ruim: 1)
     status = (
-        f"⏱️ {tempo_str} | 🎹 Pianos: {STATS['total']} "
+        f"⏱️ {tempo_str} | 🎹 Capturados: {STATS['total']} "
         f"[🆕 {STATS['novo']} | ✨ {STATS['otimo_estado']} | 🆗 {STATS['funcional']} | ⚠️ {STATS['semifuncional']}]"
     )
     return status
@@ -76,10 +61,9 @@ def processar_modelo(modelo_info):
     termos_para_testar = gerar_termos_busca(modelo_oficial)
     agora = time.time()
     
-    # Imprime o Painel antes de começar o modelo
     print(f"\n{'='*80}")
     print(obter_status_painel())
-    print(f"🔎 Analisando agora: {modelo_oficial}")
+    print(f"🔎 Monitorando: {modelo_oficial} (Score: {modelo_info.get('score_geral', 'N/A')})")
     print(f"{'='*80}")
 
     # --- 1. LOJAS BR ---
@@ -87,7 +71,6 @@ def processar_modelo(modelo_info):
         termo_loja = termos_para_testar[-1]
         print(f"🏬 Lojas BR ('{termo_loja}')...", end=" ")
         
-        # Nota: Se o teu stores_br não aceitar 2 argumentos, usa só modelo_oficial
         novos = executar_busca_lojas_br(modelo_oficial) 
         
         if novos:
@@ -101,7 +84,6 @@ def processar_modelo(modelo_info):
                 
                 salvar_no_banco(item)
                 
-                # Atualiza Stats
                 STATS['novo'] += 1
                 STATS['total'] += 1
         else:
@@ -139,7 +121,6 @@ def processar_modelo(modelo_info):
                 salvar_no_banco(item)
                 itens_salvos += 1
                 
-                # Atualiza Stats Dinamicamente
                 STATS['total'] += 1
                 if estado in STATS:
                     STATS[estado] += 1
@@ -152,8 +133,7 @@ def processar_modelo(modelo_info):
                 
                 print(f"   ✅ {icone} {estado.upper()}: R$ {item['preco']:,.0f}")
             else:
-                # Opcional: print(f"   ❌ Lixo: {analise['motivo']}")
-                pass
+                pass # Silencioso para rejeitados
         
         print(f"   -> {itens_salvos} capturados.")
         ultima_busca["mercadolivre"] = time.time()
@@ -161,15 +141,31 @@ def processar_modelo(modelo_info):
         print(f"⏩ Pulando ML (Cooldown)")
 
 def ciclo_continuo():
-    try:
-        df = pd.read_csv('data/modelos_alvo.csv')
-    except:
-        print("Erro: data/modelos_alvo.csv não encontrado.")
-        return
-
-    print(f"🤖 Piano Scout v3.1 (Com Monitoramento) Iniciado!")
+    print(f"🤖 Piano Scout v3.2 (Discovery + Monitoramento) Iniciado!")
     
     while True:
+        # 1. FASE DE DESCOBERTA (O robô aprende sobre novos modelos)
+        try:
+            print("\n--- 🚀 INICIANDO FASE DE DESCOBERTA ---")
+            executar_descoberta()
+        except Exception as e:
+            print(f"⚠️ Erro na fase de descoberta: {e}")
+
+        # 2. CARREGAMENTO INTELIGENTE (Lê o que foi descoberto)
+        try:
+            print("\n--- 🔄 ATUALIZANDO BASE DE MODELOS ---")
+            df_completo = pd.read_csv('data/modelos_alvo.csv')
+            
+            # FILTRO CRUCIAL: Só pesquisa preços de quem passou na régua (Score >= 50)
+            df = df_completo[df_completo['score_geral'] >= 50].copy()
+            print(f"📋 {len(df)} modelos qualificados (Score >= 50) carregados para monitoramento.")
+            
+        except Exception as e:
+            print(f"❌ Erro ao ler CSV: {e}")
+            time.sleep(60)
+            continue
+
+        # 3. FASE DE MONITORAMENTO DE PREÇOS
         lista_modelos = df.to_dict('records')
         random.shuffle(lista_modelos)
         
