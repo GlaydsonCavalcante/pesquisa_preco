@@ -311,14 +311,71 @@ with tab1:
 
 with tab2:
     st.header("Gestão de Dados")
-    cols = ['id', 'ativo', 'data_consulta', 'modelo', 'preco', 'custo_reparo', 'estado_detalhado', 'link']
-    df_ed = st.data_editor(df_raw[cols], column_config={"link": st.column_config.LinkColumn()}, hide_index=True, disabled=["id", "modelo"], height=600)
-    if st.button("💾 Salvar Banco"):
-        salvar_lote_db(df_ed)
-        st.success("Salvo!")
-        time.sleep(1)
-        st.rerun()
+    # --- ÁREA DE FILTROS ---
+    c_filtro1, c_filtro2 = st.columns([2, 1])
+    
+    with c_filtro1:
+        busca = st.text_input("🔍 Buscar por Modelo ou ID", placeholder="Ex: Yamaha, 105, Roland...")
+    
+    with c_filtro2:
+        filtro_status = st.selectbox("Status", ["Todos", "✅ Ativos", "❌ Inativos/Descartados"])
 
+    # --- APLICAÇÃO DOS FILTROS ---
+    # Começamos com uma cópia dos dados brutos
+    df_gestao = df_raw.copy()
+
+    # 1. Filtro de Status
+    if filtro_status == "✅ Ativos":
+        df_gestao = df_gestao[df_gestao['ativo'] == 1]
+    elif filtro_status == "❌ Inativos/Descartados":
+        df_gestao = df_gestao[df_gestao['ativo'] == 0]
+    
+    # 2. Filtro de Texto (Busca)
+    if busca:
+        # Busca no Modelo (texto) OU no ID (número convertido para texto)
+        df_gestao = df_gestao[
+            df_gestao['modelo'].astype(str).str.contains(busca, case=False, na=False) | 
+            df_gestao['id'].astype(str).str.contains(busca, na=False)
+        ]
+
+    # Mostra contador de resultados
+    st.caption(f"Mostrando {len(df_gestao)} registros.")
+
+# --- EDITOR DE DADOS ---
+    cols = ['id', 'ativo', 'verificado', 'data_consulta', 'modelo', 'preco', 'custo_reparo', 'estado_detalhado', 'link']
+    
+    # Exibe apenas as colunas que existem no dataframe (para evitar erro se 'verificado' ainda não existir)
+    cols_existentes = [c for c in cols if c in df_gestao.columns]
+
+    df_ed = st.data_editor(
+        df_gestao[cols_existentes], 
+        column_config={
+            "link": st.column_config.LinkColumn(display_text="Abrir Link"),
+            "preco": st.column_config.NumberColumn(format="R$ %.2f"),
+            "custo_reparo": st.column_config.NumberColumn(format="R$ %.2f"),
+            "ativo": st.column_config.CheckboxColumn(label="Ativo?", help="Desmarque para remover do gráfico"),
+            "verificado": st.column_config.CheckboxColumn(label="Verif.", disabled=True) # Apenas leitura
+        }, 
+        hide_index=True, 
+        disabled=["id", "data_consulta", "verificado"], # Bloqueia edição de campos técnicos
+        height=600,
+        use_container_width=True,
+        key="editor_gestao" # Chave única para não conflitar
+    )
+
+    # --- BOTÃO SALVAR ---
+    st.write("")
+    col_save, _ = st.columns([1, 4])
+    with col_save:
+        if st.button("💾 Salvar Alterações", type="primary", use_container_width=True):
+            if not df_ed.empty:
+                salvar_lote_db(df_ed)
+                st.toast("Alterações salvas com sucesso!", icon="✅")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.warning("Nada para salvar (tabela vazia).")
+                
 with tab3:
     st.header("Editor CSV")
     try: df_csv = pd.read_csv(CSV_PATH, on_bad_lines='skip')
